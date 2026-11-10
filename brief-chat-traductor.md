@@ -163,11 +163,7 @@ La Edge Function usa la `service_role` key y salta RLS para escribir las traducc
 
 **Secrets**: `DEEPL_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. Ninguno de los dos aparece en el bundle del frontend. Verifícalo antes de desplegar.
 
-**Tope de consumo (obligatorio, plan Free):**
-- Máximo 1.000 caracteres por mensaje (validado en cliente y con `check (char_length(source_text) <= 1000)`)
-- Tope mensual propio en 450.000 caracteres (margen bajo el límite de DeepL). Tabla `translation_usage (month, chars)`; la función suma antes de llamar a DeepL y, si se supera, marca `status = 'failed'` con `error_detail = 'quota'` sin llamar a la API
-- Límite por usuario: 30 traducciones por minuto en la Edge Function; el exceso devuelve 429
-- Aviso al titular en la app al 80 % del tope mensual
+**Sin topes propios**: la app no limita mensajes ni caracteres. Solo se muestra al titular el consumo del mes (`GET /v2/usage`) como información, sin bloquear nada.
 
 **Límite**: el plan Free de DeepL son 500.000 caracteres al mes. Para dos personas conversando a diario sobra, pero conviene loguear el consumo. DeepL devuelve el uso en `GET /v2/usage`.
 
