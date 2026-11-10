@@ -1,4 +1,4 @@
-# Brief: chat traductor español ↔ portugués (Brasil)
+# Brief: chat traductor multilingüe (ES ↔ PT-BR, BG…)
 
 Documento de especificación para implementar la aplicación completa. Uso personal: un titular y varias conversaciones 1:1 independientes.
 
@@ -17,7 +17,8 @@ Una web app de chat en la que cada participante escribe en su idioma y lee siemp
 **Dentro:**
 - Varias conversaciones 1:1 entre el titular y cada contacto, en tiempo real
 - Cada contacto solo ve su propia conversación: ni la lista de salas, ni otros contactos, ni sus perfiles
-- Traducción automática bidireccional ES ↔ PT-BR
+- Traducción automática bidireccional entre el español del titular y el idioma de cada contacto (inicialmente PT-BR y BG; ampliable a cualquier idioma de DeepL)
+- Invitar contactos desde la app (solo el titular)
 - Historial persistente y scroll infinito hacia arriba
 - Ver el texto original de cualquier mensaje
 - PWA instalable en móvil (iOS y Android)
@@ -27,7 +28,8 @@ Una web app de chat en la que cada participante escribe en su idioma y lee siemp
 **Fuera (de momento):**
 - Notas de voz, audio, imágenes o archivos adjuntos
 - Notificaciones push
-- Registro público / onboarding de terceros
+- Registro público abierto
+- Grupos y chats entre contactos
 - Apps nativas
 
 El modelo de datos sí debe quedar preparado para audio (ver §4), pero no se implementa nada de voz.
@@ -45,7 +47,7 @@ El modelo de datos sí debe quedar preparado para audio (ver §4), pero no se im
 | Lógica servidor | Supabase Edge Function (Deno) | Mantiene la API key de DeepL fuera del navegador |
 | Hosting | Vercel o Netlify | — |
 
-**Auth**: Supabase Auth con magic link por email. No hace falta contraseña, ni registro abierto, ni OAuth. Deshabilitar el signup público en el panel de Supabase y crear cada cuenta a mano (titular + un usuario por contacto).
+**Auth**: Supabase Auth con magic link por email. No hace falta contraseña, ni registro abierto, ni OAuth. Deshabilitar el signup público en el panel de Supabase y crear a mano solo la cuenta del titular. Los contactos se dan de alta por invitación (§6 bis).
 
 ---
 
@@ -56,7 +58,7 @@ El modelo de datos sí debe quedar preparado para audio (ver §4), pero no se im
 create table profiles (
   id           uuid primary key references auth.users(id) on delete cascade,
   display_name text not null,
-  lang         text not null check (lang in ('es','pt')),
+  lang         text not null check (lang in ('es','pt','bg')),
   created_at   timestamptz not null default now()
 );
 
@@ -81,7 +83,7 @@ create table messages (
   room_id      uuid not null references rooms(id) on delete cascade,
   sender_id    uuid not null references profiles(id),
   kind         text not null default 'text' check (kind in ('text','voice')),
-  source_lang  text not null check (source_lang in ('es','pt')),
+  source_lang  text not null check (source_lang in ('es','pt','bg')),
   source_text  text not null,
   translations jsonb not null default '{}'::jsonb,
   status       text not null default 'pending'
@@ -153,7 +155,7 @@ La Edge Function usa la `service_role` key y salta RLS para escribir las traducc
 1. Validar el JWT y comprobar que el usuario es miembro de la sala del mensaje. Si no, 403
 2. Cargar el mensaje. Si `status = 'translated'` y ya están todas las claves, retornar 200 sin más
 3. Calcular idiomas destino desde `room_members` + `profiles.lang`
-4. Llamar a DeepL: `POST https://api-free.deepl.com/v2/translate` con `text`, `source_lang` (`ES` / `PT`) y `target_lang` (`ES` / `PT-BR`). Pasar `formality: "prefer_less"` para registro informal
+4. Llamar a DeepL: `POST https://api-free.deepl.com/v2/translate` con `text`, `source_lang` y `target_lang` según una tabla de mapeo (`es→ES`, `pt→PT-BR` como destino y `PT` como origen, `bg→BG`). Pasar `formality: "prefer_less"` solo en idiomas que lo admiten (ES, PT-BR); en BG no
 5. Escribir `translations` y `status = 'translated'`
 6. Ante error de DeepL: `status = 'failed'` y `error_detail` con el código HTTP y el cuerpo de la respuesta
 
@@ -162,6 +164,15 @@ La Edge Function usa la `service_role` key y salta RLS para escribir las traducc
 **Secrets**: `DEEPL_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. Ninguno de los dos aparece en el bundle del frontend. Verifícalo antes de desplegar.
 
 **Límite**: el plan Free de DeepL son 500.000 caracteres al mes. Para dos personas conversando a diario sobra, pero conviene loguear el consumo. DeepL devuelve el uso en `GET /v2/usage`.
+
+---
+
+## 6 bis. Invitaciones
+
+- Tabla `invites (id, email, lang, display_name, room_id, created_by, used_at)`. Solo el titular puede insertar (RLS)
+- Edge Function `invite-contact`: valida que quien llama es el titular, crea la sala 1:1, el `room_members` del titular y envía el magic link con `auth.admin.inviteUserByEmail`
+- Al primer login, un trigger crea el `profile` del contacto con el `lang` de la invitación y lo une a su sala
+- El signup público sigue deshabilitado: solo se entra por invitación
 
 ---
 
@@ -191,6 +202,7 @@ La app trata sobre dos alfabetos que conviven. Eso es el material de diseño, no
 | `--line` | `#2B3948` | Divisores, bordes |
 | `--lang-es` | `#E0A040` | Ámbar: identidad del español |
 | `--lang-pt` | `#48ADA4` | Verde jade: identidad del portugués |
+| `--lang-bg` | `#8E7CC3` | Violeta: identidad del búlgaro |
 | `--text` | `#E9EEF3` | Texto principal |
 | `--muted` | `#8496A6` | Metadatos, texto original |
 
@@ -200,9 +212,9 @@ Cada idioma tiene color propio. No es decoración: el color indica en qué idiom
 
 - **Display**: Unbounded — geométrica y ancha, con soporte latino extendido (acentos y tildes de ES y PT). Solo en el encabezado de la sala y la pantalla de acceso. Nada más
 - **Cuerpo**: Golos Text — buena legibilidad en móvil con diacríticos (ã, õ, ç, ñ)
-- **Utilidad**: JetBrains Mono — timestamps, etiquetas `ES` / `PT`, texto original
+- **Utilidad**: JetBrains Mono — timestamps, etiquetas `ES` / `PT` / `БГ`, texto original
 
-Comprueba que las tres cargan el subset `latin-ext`. Si no, caracteres como `ã` o `õ` caen al fallback del sistema.
+Comprueba que las tres cargan los subsets `latin-ext` y `cyrillic`. Si no, `ã`, `õ` o el cirílico caen al fallback del sistema y la app se descuadra solo para algunos contactos.
 
 ### Elemento distintivo: el eco
 
@@ -216,7 +228,7 @@ Todo lo demás, disciplinado y callado. Sin gradientes, sin sombras difusas, sin
 
 ### Textos de interfaz
 
-Sobrios y en el idioma del usuario (interfaz bilingüe ES/PT según `profiles.lang`). Nada de "¡Ups!" ni disculpas. Ejemplos: `Traduciendo…` / `Traduzindo…`, `No se pudo traducir` / `Não foi possível traduzir`, `Reintentar` / `Tentar de novo`, `Ver original`.
+Sobrios y en el idioma del usuario (interfaz en ES, PT o BG según `profiles.lang`; textos en un fichero por idioma). Nada de "¡Ups!" ni disculpas. Ejemplos: `Traduciendo…` / `Traduzindo…`, `No se pudo traducir` / `Não foi possível traduzir`, `Reintentar` / `Tentar de novo`, `Ver original`.
 
 **Lista de conversaciones**: solo la ve el titular. Un contacto entra directamente a su sala, sin pantalla de lista.
 
